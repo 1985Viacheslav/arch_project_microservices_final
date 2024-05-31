@@ -48,7 +48,7 @@ async def refresh_token(token: str = Depends(oauth2_scheme)):
 async def logout(token: str = Depends(oauth2_scheme)):
     headers = {"Authorization": f"Bearer {token}"}
     async with httpx.AsyncClient() as client:
-        response = await client.post(f"{settings.USER_SERVICE_URL}/auth/refresh", headers=headers)
+        response = await client.post(f"{settings.USER_SERVICE_URL}/auth/logout", headers=headers)
         return handle_response(response)
 
 
