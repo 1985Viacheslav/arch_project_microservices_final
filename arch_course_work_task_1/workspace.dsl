@@ -18,7 +18,7 @@ workspace {
         # Описание компонент модели
         user = person "Пользователь"
         messenger = softwareSystem "Мессенджер" {
-            description "Система мгновенного обмена сообщениями"
+            description "Система обмена сообщениями"
 
             api_gateway = container "API Gateway" {
                 description "Шлюз для маршрутизации запросов между сервисами"
@@ -44,6 +44,12 @@ workspace {
                     tags "database"
                 }
 
+                user_cache = container "User Cache" {
+                    description "Кэш данных пользователей для ускорения поиска"
+                    technology "Redis"
+                    tags "cache"
+                }
+
                 chat_database = container "Chat Database" {
                     description "База данных для хранения информации о чатах и сообщениях"
                     technology "MongoDB"
@@ -52,6 +58,7 @@ workspace {
             }
 
             user_service -> user_database "Получение/обновление данных о пользователях" "TCP 5432"
+            user_service -> user_cache "Чтение/запись кэшированных данных пользователей" "TCP 6379"
             ptp_chat_service -> chat_database "Получение/обновление данных о персональных чатах и сообщениях" "TCP 27017"
             group_chat_service -> chat_database "Получение/обновление данных о групповых чатах и сообщениях" "TCP 27017"
 
@@ -81,6 +88,10 @@ workspace {
                     containerInstance messenger.user_database
                 }
 
+                deploymentNode "User Cache Server" {
+                    containerInstance messenger.user_cache
+                }
+
                 deploymentNode "Chat Database Server" {
                     containerInstance messenger.chat_database
                 }
@@ -102,61 +113,78 @@ workspace {
 
         dynamic messenger "UC01" "Создание нового пользователя" {
             autoLayout
-            user -> messenger.api_gateway "Создать нового пользователя (POST /user)"
-            messenger.api_gateway -> messenger.user_service "Создать нового пользователя (POST /user)"
-            messenger.user_service -> messenger.user_database "Сохранить данные о пользователе"
+            user -> messenger.api_gateway "Создать нового пользователя (POST /auth/register)"
+            messenger.api_gateway -> messenger.user_service "Создать нового пользователя (POST /auth/register)"
+            messenger.user_service -> messenger.user_database "Сохранение данных о пользователе"
         }
 
         dynamic messenger "UC02" "Поиск пользователя по логину" {
             autoLayout
-            user -> messenger.api_gateway "Поиск пользователя (GET /users/login)"
-            messenger.api_gateway -> messenger.user_service "Поиск пользователя (GET /users/login)"
+            user -> messenger.api_gateway "Поиск пользователя (GET /user)"
+            messenger.api_gateway -> messenger.user_service "Поиск пользователя (GET /user)"
+            messenger.user_service -> messenger.user_cache "Чтение кэшированных данных пользователей"
         }
 
         dynamic messenger "UC03" "Поиск пользователя по маске имени и фамилии" {
             autoLayout
-            user -> messenger.api_gateway "Поиск пользователя (GET /users/name)"
-            messenger.api_gateway -> messenger.user_service "Поиск пользователя (GET /users/name)"
+            user -> messenger.api_gateway "Поиск пользователя (GET /user/search/{mask})"
+            messenger.api_gateway -> messenger.user_service "Поиск пользователя (GET /user/search/{mask})"
+            messenger.user_service -> messenger.user_cache "Чтение кэшированных данных пользователей"
         }
 
         dynamic messenger "UC04" "Создание группового чата" {
             autoLayout
-            user -> messenger.api_gateway "Создать групповой чат (POST /chat/group)"
-            messenger.api_gateway -> messenger.group_chat_service "Создать групповой чат (POST /chat/group)"
+            user -> messenger.api_gateway "Создать групповой чат (POST /group_chat/create)"
+            messenger.api_gateway -> messenger.group_chat_service "Создать групповой чат (POST /group_chat/create)"
+            messenger.group_chat_service -> messenger.chat_database "Сохраненение данных чата"
         }
 
         dynamic messenger "UC05" "Добавление пользователя в групповой чат" {
             autoLayout
-            user -> messenger.api_gateway "Добавить пользователя в групповой чат (POST /chat/group/add)"
-            messenger.api_gateway -> messenger.group_chat_service "Добавить пользователя в групповой чат (POST /chat/group/add)"
+            user -> messenger.api_gateway "Добавить пользователя в групповой чат (POST /group_chat/add_member/{group_id}/{user_id})"
+            messenger.api_gateway -> messenger.group_chat_service "Добавить пользователя в групповой чат (POST /group_chat/add_member/{group_id}/{user_id})"
+            messenger.group_chat_service -> messenger.chat_database "Сохранение и обновление данных чата"
         }
 
         dynamic messenger "UC06" "Добавление сообщения в групповой чат" {
             autoLayout
-            user -> messenger.api_gateway "Добавить сообщение (POST /chat/group/message)"
-            messenger.api_gateway -> messenger.group_chat_service "Добавить сообщение (POST /chat/group/message)"
+            user -> messenger.api_gateway "Добавить сообщение (POST /group_chat/send_message/{group_id})"
+            messenger.api_gateway -> messenger.group_chat_service "Добавить сообщение (POST /group_chat/send_message/{group_id})"
+            messenger.group_chat_service -> messenger.chat_database "Сохранение и обновление данных чата"
         }
 
         dynamic messenger "UC07" "Загрузка сообщений группового чата" {
             autoLayout
-            user -> messenger.api_gateway "Загрузить сообщения (GET /chat/group/messages)"
-            messenger.api_gateway -> messenger.group_chat_service "Загрузить сообщения (GET /chat/group/messages)"
+            user -> messenger.api_gateway "Загрузить сообщения (GET /group_chat/{group_id})"
+            messenger.api_gateway -> messenger.group_chat_service "Загрузить сообщения (GET /group_chat/{group_id})"
+            messenger.group_chat_service -> messenger.chat_database "Получение данных о сообщениях из чата"
         }
 
         dynamic messenger "UC08" "Отправка PtP сообщения пользователю" {
             autoLayout
-            user -> messenger.api_gateway "Отправить PtP сообщение (POST /chat/ptp)"
-            messenger.api_gateway -> messenger.ptp_chat_service "Отправить PtP сообщение (POST /chat/ptp)"
+            user -> messenger.api_gateway "Отправить PtP сообщение (POST /ptp_chat/send_message/{user_getter_id})"
+            messenger.api_gateway -> messenger.ptp_chat_service "Отправить PtP сообщение (POST /ptp_chat/send_message/{user_getter_id})"
+            messenger.ptp_chat_service -> messenger.chat_database "Сохранение и обновление данных чата"
         }
 
         dynamic messenger "UC09" "Получение PtP списка сообщений для пользователя" {
             autoLayout
-            user -> messenger.api_gateway "Получить PtP сообщения (GET /chat/ptp/messages)"
-            messenger.api_gateway -> messenger.ptp_chat_service "Получить PtP сообщения (GET /chat/ptp/messages)"
+            user -> messenger.api_gateway "Получить PtP сообщения (GET /ptp_chat/get_messages)"
+            messenger.api_gateway -> messenger.ptp_chat_service "Получить PtP сообщения (GET /ptp_chat/get_messages)"
+            messenger.ptp_chat_service -> messenger.chat_database "Получение данных о сообщениях из чата"
+        }
+
+        deployment messenger "Production" {
+            include *
+            autolayout lr
         }
 
         styles {
             element "database" {
+                shape cylinder
+            }
+
+            element "cache" {
                 shape cylinder
             }
         }
